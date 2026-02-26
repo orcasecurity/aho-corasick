@@ -10,6 +10,7 @@ type automaton interface {
 	IsMatchState(stateID) bool
 	IsMatchOrDeadState(stateID) bool
 	GetMatch(stateID, int, int) *Match
+	GetMatchInto(stateID, int, int, *Match) bool
 	MatchCount(stateID) int
 	NextState(stateID, byte) stateID
 	NextStateNoFail(stateID, byte) stateID
@@ -206,4 +207,107 @@ func findAtNoState(a automaton, prestate *prefilterState, haystack []byte, at in
 		return a.LeftmostFindAtNoState(prestate, haystack, at)
 	}
 	return nil
+}
+
+func findAtNoStateInto(a automaton, prestate *prefilterState, haystack []byte, at int, dst *Match) bool {
+	kind := a.MatchKind()
+	if kind == nil {
+		return false
+	}
+	switch *kind {
+	case StandardMatch:
+		return standardFindAtNoStateInto(a, prestate, haystack, at, dst)
+	case LeftMostFirstMatch, LeftMostLongestMatch:
+		return leftmostFindAtNoStateInto(a, prestate, haystack, at, dst)
+	}
+	return false
+}
+
+func standardFindAtNoStateInto(a automaton, prestate *prefilterState, haystack []byte, at int, dst *Match) bool {
+	return standardFindAtNoStateImpInto(a, prestate, a.Prefilter(), haystack, at, dst)
+}
+
+func standardFindAtNoStateImpInto(a automaton, prestate *prefilterState, prefilter prefilter, haystack []byte, at int, dst *Match) bool {
+	if a.Anchored() && at > 0 {
+		return false
+	}
+
+	stateID := a.StartState()
+	if a.GetMatchInto(stateID, 0, at, dst) {
+		return true
+	}
+
+	for at < len(haystack) {
+		if prefilter != nil && prestate.IsEffective(at) && stateID == a.StartState() {
+			c := nextPrefilter(prestate, prefilter, haystack, at)
+			if c == noneCandidate {
+				return false
+			}
+			at = c
+		}
+
+		stateID = a.NextStateNoFail(stateID, haystack[at])
+		at += 1
+
+		if a.IsMatchOrDeadState(stateID) {
+			if stateID == deadStateID {
+				return false
+			}
+			return a.GetMatchInto(stateID, 0, at, dst)
+		}
+	}
+
+	return false
+}
+
+func leftmostFindAtNoStateInto(a automaton, prestate *prefilterState, haystack []byte, at int, dst *Match) bool {
+	return leftmostFindAtNoStateImpInto(a, prestate, a.Prefilter(), haystack, at, dst)
+}
+
+func leftmostFindAtNoStateImpInto(a automaton, prestate *prefilterState, prefilter prefilter, haystack []byte, at int, dst *Match) bool {
+	if a.Anchored() && at > 0 {
+		return false
+	}
+	if prefilter != nil && !prefilter.ReportsFalsePositives() {
+		c := prefilter.NextCandidate(prestate, haystack, at)
+		if c == noneCandidate {
+			return false
+		}
+	}
+
+	stateID := a.StartState()
+	var lastMatch Match
+	hasLastMatch := a.GetMatchInto(stateID, 0, at, &lastMatch)
+
+	for at < len(haystack) {
+		if prefilter != nil && prestate.IsEffective(at) && stateID == a.StartState() {
+			c := prefilter.NextCandidate(prestate, haystack, at)
+			if c == noneCandidate {
+				return false
+			}
+			at = c
+		}
+
+		stateID = a.NextStateNoFail(stateID, haystack[at])
+		at += 1
+
+		if a.IsMatchOrDeadState(stateID) {
+			if stateID == deadStateID {
+				if !hasLastMatch {
+					return false
+				}
+				*dst = lastMatch
+				return true
+			}
+			if a.GetMatchInto(stateID, 0, at, &lastMatch) {
+				hasLastMatch = true
+			}
+		}
+	}
+
+	if !hasLastMatch {
+		return false
+	}
+	*dst = lastMatch
+	return true
 }

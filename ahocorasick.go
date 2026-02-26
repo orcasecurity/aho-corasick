@@ -230,21 +230,103 @@ type Finder interface {
 	PatternCount() int
 }
 
+// MatchState stores reusable scratch space for zero-allocation matching.
+type MatchState struct {
+	prestate prefilterState
+	match    Match
+}
+
+func (s *MatchState) reset(maxPatternLen int) {
+	s.prestate.skips = 0
+	s.prestate.skipped = 0
+	s.prestate.maxMatchLen = maxPatternLen
+	s.prestate.inert = false
+	s.prestate.lastScanAt = 0
+}
+
+// NewMatchState creates reusable state for FindAllByteToWithState.
+func (ac AhoCorasick) NewMatchState() MatchState {
+	state := MatchState{}
+	state.reset(ac.i.MaxPatternLen())
+	return state
+}
+
+func isWordByte(b byte) bool {
+	return unicode.IsLetter(rune(b)) || unicode.IsDigit(rune(b))
+}
+
 // FindAll returns the matches found in the haystack
 func (ac AhoCorasick) FindAll(haystack string) []Match {
-	iter := ac.Iter(haystack)
-	matches := make([]Match, 0)
+	return ac.FindAllByteTo([]byte(haystack), nil)
+}
 
-	for {
-		next := iter.Next()
-		if next == nil {
+// FindAllByte returns the matches found in the haystack bytes.
+func (ac AhoCorasick) FindAllByte(haystack []byte) []Match {
+	return ac.FindAllByteTo(haystack, nil)
+}
+
+// FindAllTo appends matches into dst and returns the resulting slice.
+// Note: converting a string to []byte allocates once; for zero-allocation matching use FindAllByteTo.
+func (ac AhoCorasick) FindAllTo(haystack string, dst []Match) []Match {
+	return ac.FindAllByteTo([]byte(haystack), dst)
+}
+
+// FindAllByteTo appends matches into dst and returns the resulting slice.
+// If dst has enough capacity, this path does not allocate.
+func (ac AhoCorasick) FindAllByteTo(haystack []byte, dst []Match) []Match {
+	state := ac.NewMatchState()
+	return ac.findAllByteTo(haystack, dst, &state.prestate, &state.match)
+}
+
+// FindAllByteToWithState appends matches into dst and returns the resulting slice.
+// Reusing both state and dst enables a zero-allocation matching path.
+func (ac AhoCorasick) FindAllByteToWithState(haystack []byte, dst []Match, state *MatchState) []Match {
+	if state == nil {
+		panic("state cannot be nil")
+	}
+	state.reset(ac.i.MaxPatternLen())
+	return ac.findAllByteTo(haystack, dst, &state.prestate, &state.match)
+}
+
+func (ac AhoCorasick) findAllByteTo(haystack []byte, dst []Match, prestate *prefilterState, match *Match) []Match {
+	pos := 0
+
+	for pos <= len(haystack) {
+		if !ac.i.FindAtNoStateInto(prestate, haystack, pos, match) {
 			break
 		}
 
-		matches = append(matches, *next)
-	}
+		start := match.Start()
+		pos = start + 1
 
-	return matches
+		if ac.matchOnlyWholeWords {
+			if start-1 >= 0 && isWordByte(haystack[start-1]) {
+				continue
+			}
+			if match.end < len(haystack) && isWordByte(haystack[match.end]) {
+				continue
+			}
+		}
+
+		dst = append(dst, *match)
+	}
+	return dst
+}
+
+// ContainsByte reports whether haystack contains at least one match.
+func (ac AhoCorasick) ContainsByte(haystack []byte) bool {
+	state := ac.NewMatchState()
+	return ac.ContainsByteWithState(haystack, &state)
+}
+
+// ContainsByteWithState reports whether haystack contains at least one match.
+// Reusing state enables a zero-allocation contains check.
+func (ac AhoCorasick) ContainsByteWithState(haystack []byte, state *MatchState) bool {
+	if state == nil {
+		panic("state cannot be nil")
+	}
+	state.reset(ac.i.MaxPatternLen())
+	return ac.i.FindAtNoStateInto(&state.prestate, haystack, 0, &state.match)
 }
 
 // AhoCorasickBuilder defines a set of options applied before the patterns are built
@@ -322,6 +404,7 @@ type imp interface {
 	OverlappingFindAt(prestate *prefilterState, haystack []byte, at int, state_id *stateID, match_index *int) *Match
 	EarliestFindAt(prestate *prefilterState, haystack []byte, at int, state_id *stateID) *Match
 	FindAtNoState(prestate *prefilterState, haystack []byte, at int) *Match
+	FindAtNoStateInto(prestate *prefilterState, haystack []byte, at int, dst *Match) bool
 }
 
 type matchKind int

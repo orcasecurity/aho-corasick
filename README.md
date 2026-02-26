@@ -63,6 +63,30 @@ for next := iter.Next(); next != nil; next = iter.Next() {
 }
 ```
 
+Zero-allocation matching with caller-provided buffer:
+
+```go
+haystackBytes := []byte(haystack)
+dst := make([]ahocorasick.Match, 0, 128) // capacity chosen by caller
+state := ac.NewMatchState()
+matches := ac.FindAllByteToWithState(haystackBytes, dst[:0], &state)
+```
+
+`FindAllByteToWithState` does not allocate as long as `dst` has enough capacity and the same `state` is reused.
+
+Zero-allocation "contains" check (fast early-exit):
+
+```go
+haystackBytes := []byte(haystack)
+state := ac.NewMatchState()
+hasMatch := ac.ContainsByteWithState(haystackBytes, &state)
+```
+
+For high-throughput paths:
+- Use `ContainsByteWithState` when you only need a boolean.
+- Use `FindAllByteToWithState` when you need match positions/pattern IDs.
+- Prefer byte-based APIs to avoid `string` -> `[]byte` conversion allocations.
+
 It's plenty fast but if you want to use it in parallel, that is also possible.
 
 Memory consumption won't increase because the read-only automaton is not actually copied, only the counters are.

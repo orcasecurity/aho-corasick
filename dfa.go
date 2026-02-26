@@ -48,6 +48,10 @@ func (d iDFA) FindAtNoState(prestate *prefilterState, haystack []byte, at int) *
 	return findAtNoState(d.atom, prestate, haystack, at)
 }
 
+func (d iDFA) FindAtNoStateInto(prestate *prefilterState, haystack []byte, at int, dst *Match) bool {
+	return findAtNoStateInto(d.atom, prestate, haystack, at, dst)
+}
+
 func (n iDFA) LeftmostFindAtNoState(prestate *prefilterState, haystack []byte, at int) *Match {
 	return leftmostFindAtNoState(n.atom, prestate, haystack, at)
 }
@@ -168,6 +172,10 @@ func (b iByteClass) GetMatch(id stateID, i int, i2 int) *Match {
 	return b.repr.GetMatch(id, i, i2)
 }
 
+func (b iByteClass) GetMatchInto(id stateID, i int, i2 int, dst *Match) bool {
+	return b.repr.GetMatchInto(id, i, i2, dst)
+}
+
 func (b iByteClass) MatchCount(id stateID) int {
 	return b.repr.MatchCount(id)
 }
@@ -264,16 +272,28 @@ func (p iPremultipliedByteClass) IsMatchOrDeadState(id stateID) bool {
 }
 
 func (p iPremultipliedByteClass) GetMatch(id stateID, match_index int, end int) *Match {
-	if id > p.repr.max_match {
+	var match Match
+	if !p.GetMatchInto(id, match_index, end, &match) {
 		return nil
 	}
+	return &match
+}
 
-	m := p.repr.matches[int(id)/p.repr.alphabetLen()][match_index]
-	return &Match{
-		pattern: m.PatternID,
-		len:     m.PatternLength,
-		end:     end,
+func (p iPremultipliedByteClass) GetMatchInto(id stateID, match_index int, end int, dst *Match) bool {
+	if id > p.repr.max_match {
+		return false
 	}
+
+	matches := p.repr.matches[int(id)/p.repr.alphabetLen()]
+	if match_index >= len(matches) {
+		return false
+	}
+
+	m := matches[match_index]
+	dst.pattern = m.PatternID
+	dst.len = m.PatternLength
+	dst.end = end
+	return true
 }
 
 func (p iPremultipliedByteClass) MatchCount(id stateID) int {
@@ -287,7 +307,7 @@ func (p iPremultipliedByteClass) NextState(id stateID, b byte) stateID {
 	return p.repr.trans[o]
 }
 
-//todo this leaks garbage
+// todo this leaks garbage
 func (p iPremultipliedByteClass) NextStateNoFail(id stateID, b byte) stateID {
 	next := p.NextState(id, b)
 	if next == failedStateID {
@@ -373,15 +393,27 @@ func (p iPremultiplied) IsMatchOrDeadState(id stateID) bool {
 }
 
 func (p iPremultiplied) GetMatch(id stateID, match_index int, end int) *Match {
-	if id > p.repr.max_match {
+	var match Match
+	if !p.GetMatchInto(id, match_index, end, &match) {
 		return nil
 	}
-	m := p.repr.matches[int(id)/256][match_index]
-	return &Match{
-		pattern: m.PatternID,
-		len:     m.PatternLength,
-		end:     end,
+	return &match
+}
+
+func (p iPremultiplied) GetMatchInto(id stateID, match_index int, end int, dst *Match) bool {
+	if id > p.repr.max_match {
+		return false
 	}
+	matches := p.repr.matches[int(id)/256]
+	if match_index >= len(matches) {
+		return false
+	}
+
+	m := matches[match_index]
+	dst.pattern = m.PatternID
+	dst.len = m.PatternLength
+	dst.end = end
+	return true
 }
 
 func (p iPremultiplied) MatchCount(id stateID) int {
@@ -503,6 +535,10 @@ func (s *iStandard) GetMatch(id stateID, match_index int, end int) *Match {
 	return s.repr.GetMatch(id, match_index, end)
 }
 
+func (s *iStandard) GetMatchInto(id stateID, match_index int, end int, dst *Match) bool {
+	return s.repr.GetMatchInto(id, match_index, end, dst)
+}
+
 func (s *iStandard) MatchCount(id stateID) int {
 	return s.repr.MatchCount(id)
 }
@@ -618,24 +654,30 @@ func (r *iRepr) isMatchStateOrDeadState(id stateID) bool {
 }
 
 func (r *iRepr) GetMatch(id stateID, match_index int, end int) *Match {
+	var match Match
+	if !r.GetMatchInto(id, match_index, end, &match) {
+		return nil
+	}
+	return &match
+}
+
+func (r *iRepr) GetMatchInto(id stateID, match_index int, end int, dst *Match) bool {
 	i := int(id)
 	if id > r.max_match {
-		return nil
+		return false
 	}
-	if i > len(r.matches) {
-		return nil
+	if i >= len(r.matches) {
+		return false
 	}
-	matches := r.matches[int(id)]
-	if match_index > len(matches) {
-		return nil
+	matches := r.matches[i]
+	if match_index >= len(matches) {
+		return false
 	}
 	pattern := matches[match_index]
-
-	return &Match{
-		pattern: pattern.PatternID,
-		len:     pattern.PatternLength,
-		end:     end,
-	}
+	dst.pattern = pattern.PatternID
+	dst.len = pattern.PatternLength
+	dst.end = end
+	return true
 }
 
 func (r *iRepr) MatchCount(id stateID) int {

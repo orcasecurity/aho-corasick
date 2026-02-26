@@ -21,6 +21,10 @@ func (n *iNFA) FindAtNoState(prefilterState *prefilterState, bytes []byte, i int
 	return findAtNoState(n, prefilterState, bytes, i)
 }
 
+func (n *iNFA) FindAtNoStateInto(prefilterState *prefilterState, bytes []byte, i int, dst *Match) bool {
+	return findAtNoStateInto(n, prefilterState, bytes, i, dst)
+}
+
 func (n *iNFA) Repr() *iRepr {
 	return nil
 }
@@ -129,19 +133,26 @@ func (n *iNFA) UsePrefilter() bool {
 }
 
 func (n *iNFA) GetMatch(id stateID, matchIndex int, end int) *Match {
-	if int(id) >= len(n.states) {
+	var match Match
+	if !n.GetMatchInto(id, matchIndex, end, &match) {
 		return nil
+	}
+	return &match
+}
+
+func (n *iNFA) GetMatchInto(id stateID, matchIndex int, end int, dst *Match) bool {
+	if int(id) >= len(n.states) {
+		return false
 	}
 	state := n.states[id]
 	if matchIndex >= len(state.matches) {
-		return nil
+		return false
 	}
 	pat := state.matches[matchIndex]
-	return &Match{
-		pattern: pat.PatternID,
-		len:     pat.PatternLength,
-		end:     end,
-	}
+	dst.pattern = pat.PatternID
+	dst.len = pat.PatternLength
+	dst.end = end
+	return true
 }
 
 func (n *iNFA) addDenseState(depth int) stateID {
